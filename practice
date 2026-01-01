@@ -1,0 +1,243 @@
+-- ```````````````````````````````````````````````````````````````````
+-- 🔹 Advanced SQL & Data Analysis Questions (ClassicModels)
+-- `````````````````````````````````````````````````````````````````
+-- 1. Revenue & Sales Analysis
+
+-- Write a query to find year-over-year revenue growth by product line.
+select
+pl.productLine,
+year(o.orderDate) as years,
+sum(od.quantityOrdered * od.priceEach) as revenue
+from orders o
+join orderdetails od on o.orderNumber = od.orderNumber
+join Products p on p.productCode = od.productCode
+join ProductLines pl on pl.productLine = p.productLine
+group by pl.productLine, year(o.orderDate)
+
+-- Identify the top 3 customers per country based on total sales using window functions.
+
+select * from (
+select 
+c.country, c.customerName, sum(od.quantityOrdered * od.priceEach) as total_sales,
+rank() over(partition by c.country order by sum(od.quantityOrdered * od.priceEach) desc ) as ranking
+from customers c
+join orders o on c.customerNumber = o.customerNumber
+join orderdetails od on od.orderNumber = o.orderNumber
+group by c.country, c.customerName) t 
+where ranking <= 3
+
+-- Find customers whose average order value is higher than the overall average.
+
+select c.customerName,
+avg(od.quantityOrdered * od.priceEach) as avg_order_value
+from customers c
+join orders o on c.customerNumber = o.customerNumber
+join orderdetails od on o.orderNumber = od.orderNumber
+group by c.customerName
+having avg_order_value > (select avg(quantityOrdered * priceEach) from orderdetails)
+
+-- Calculate monthly revenue trends and detect months with declining sales.
+
+with cte_report as (
+select 
+year(o. orderDate) as years,
+month(o.orderDate) as months,
+sum(od. quantityOrdered * od. priceEach) as sales 
+from orders o
+join orderdetails od on o.orderNumber = od.orderNumber
+group by years, months
+)
+select 
+years, months, sales,
+lag(sales) over(order by years, months) as last_month_sales,
+sales - lag(sales) over(order by years, months)  as sales_change,
+case
+when sales < lag(sales) over(order by years, months) then 'decline' else 'increase' end as trends
+from cte_report
+order by years, months
+
+-- Which product lines contribute to 80% of total revenue? (Pareto analysis)
+
+with cte_revenue as
+(select p. productLine, sum(od.quantityOrdered * od.priceEach ) as revenue
+from Products p
+join orderdetails od on od.productCode = p.productCode
+group by p. productLine)
+select * from
+(select *,
+sum(revenue) over(order by revenue desc) / sum(revenue) over() as com_total_ratio
+from  cte_revenue)t
+where com_total_ratio <= 0.8
+
+-- 2. Joins & Subquery Challenges
+-- Find customers who never placed an order.
+
+select customerName, customerNumber
+from customers 
+where customerNumber not in (select customerNumber from orders)
+ 
+-- Identify products that were never ordered.
+select productCode, productName
+from Products
+where productCode not in (select productCode from orderdetails )
+
+-- Find employees who do not manage any customers.
+
+SELECT  e.employeeNumber, e.firstName
+FROM employees e
+left join customers c on e. employeeNumber = c.salesRepEmployeeNumber
+where c.customerNumber is null 
+
+-- Retrieve customers whose credit limit is lower than their total order value.
+
+SELECT c.customerName, c.creditLimit, sum(od.quantityOrdered * od.priceEach) as total_orders
+FROM customers c
+join orders o on c.customerNumber = o.customerNumber
+join orderdetails od on o.orderNumber = od.orderNumber
+group by c.customerName, c.creditLimit
+having total_orders > c.creditLimit
+
+-- Find orders where total order amount exceeds the customer’s credit limit.
+
+SELECT o.orderNumber, c.creditLimit, sum(od.quantityOrdered * od.priceEach) as total_orders
+FROM orders o
+join customers c on o.customerNumber = c.customerNumber
+join orderdetails od on o.orderNumber = od.orderNumber
+group by o.orderNumber, c.creditLimit
+having total_orders > c.creditLimit
+ 
+-- 3. Window Functions (Advanced)
+-- Rank customers by total sales within each country.
+
+SELECT c.customerName, c.country,  sum(od.quantityOrdered * od.priceEach) as total_sales,
+rank() over(partition by c.country order by sum(od.quantityOrdered * od.priceEach) desc ) as rank_in_country
+FROM customers c
+join orders o on c.customerNumber = o.customerNumber
+join orderdetails od on o.orderNumber = od.orderNumber
+group by c.customerName, c.country
+
+-- Calculate running total of sales by order date.
+
+select o.orderDate, sum(od.quantityOrdered * od.priceEach) as daily_sales, 
+sum(sum(od.quantityOrdered * od.priceEach)) over(order by  o.orderDate ) as runnning_total
+from orders o
+join orderdetails od on o.orderNumber = od.orderNumber
+group by o.orderDate
+
+-- Find the second highest selling product in each product line.
+with cte_ranking as (
+select p.productName, p.productLine, sum(od.quantityOrdered) as total_quantity,
+dense_rank() over(partition by p.productLine order by sum(od.quantityOrdered) desc) as rnaking
+from Products p
+join orderdetails od on od.productCode = p.productCode
+group by p.productName, p.productLine)
+select * from  cte_ranking where rnaking = 2
+
+-- Detect customers whose latest order value is higher than their previous order.
+with cte_order_values as (
+select 
+o.customerNumber, o.orderDate, sum(od.quantityOrdered * od.priceEach) as latest_order_value,
+lag(sum(od.quantityOrdered * od.priceEach)) over(partition by  o.customerNumber order by o.orderDate) as previous_order
+from orders o
+join orderdetails od on o.orderNumber = od.orderNumber
+group by o.customerNumber, o.orderDate)
+select * from cte_order_values where latest_order_value > previous_order
+
+-- Compute moving average of monthly sales (3-month window).
+
+select 
+year(orderDate) as years, month(orderDate) as months, sum(od.quantityOrdered * od.priceEach) as sales,
+avg(sum(od.quantityOrdered * od.priceEach)) over(order by year(orderDate), month(orderDate)) as moving_avg
+from orders o 
+join orderdetails od on od.orderNumber = o.orderNumber
+group by years, months
+
+-- 1. Use a CTE to find top 5 customers by total order value
+
+with cte_top_customers as (
+select 
+	o.customerNumber,
+	sum(od.quantityOrdered * od.priceEach) as valus
+from orders o 
+join orderdetails od on o.orderNumber = od.orderNumber
+group by o.customerNumber
+)
+select * from cte_top_customers order by  valus desc 
+limit 5
+
+-- 2. Use a CTE to find all orders with above-average total
+
+with cte_above_average_total as (
+select o.orderNumber, sum(od.quantityOrdered * od.priceEach) as total
+from orders o 
+join orderdetails od on o.orderNumber = od.orderNumber
+group by o.orderNumber
+)
+select * from cte_above_average_total where total > (select avg(total) from cte_above_average_total)
+
+-- Find orders for customers in 'USA' using the index
+
+create index idx_cus_name on customers(customerName);
+explain select * from customers where customerName = 'Atelier graphique';
+create  index index_product on Products(productLine)
+explain select * from Products where productLine = 'Motorcycles'
+ALTER TABLE Products
+DROP FOREIGN KEY fk_Products_ProductLines_idx;
+
+-- 5. Create a stored procedure to get orders by a customer
+
+delimiter $$
+create procedure pro_orders_by_customers(in customer_id_input int)
+begin
+select o.orderNumber, o.orderDate, sum(od.quantityOrdered * od.priceEach) as valeus
+from orders o
+join orderdetails od on o.orderNumber = od.orderNumber
+where o.customerNumber = customer_id_input
+group by o.orderNumber;
+end$$
+delimiter ;
+call pro_orders_by_customers(363)
+
+-- 7. Use a recursive CTE to generate a sequence of months
+with recursive cte_months as (
+select 1 as months_sequence
+union 
+select months_sequence + 1
+from cte_months
+where months_sequence < 12
+)
+select * from cte_months;
+
+-- 8. Find the cumulative sales per customer
+
+select 
+o.customerNumber, sum(od.quantityOrdered * od.priceEach) over(PARTITION BY o.customerNumber order by o.orderDate) as 'cumulative sales per customer'
+from orders o 
+join orderdetails od on o.orderNumber = od.orderNumber
+
+-- 10. Create a procedure to update product prices by percentage
+
+delimiter ??
+create procedure pro_for_update(in percentage decimal(5, 2))
+begin
+update Products
+set  buyPrice = buyPrice * (1+ percentage /100);
+end??
+delimiter ;
+call pro_for_update(5)
+select * from Products
+
+-- 20. Create a procedure to get product stock summary
+delimiter //
+create procedure pro_stock_summary( )
+begin
+SELECT productLine, count(*) as total_products, sum(quantityInStock) as total_Stock
+FROM products
+group by productLine;
+end //
+delimiter ;
+call pro_stock_summary()
+
+
+
+
